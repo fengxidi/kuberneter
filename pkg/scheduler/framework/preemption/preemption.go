@@ -148,12 +148,15 @@ func (ev *Evaluator) Preempt(ctx context.Context, pod *v1.Pod, m framework.NodeT
 	}
 
 	// 1) Ensure the preemptor is eligible to preempt other pods.
+	// 确保抢占者有资格抢占其他吊舱。
+	// 通过比较NominatedNodeName上所有pod的优先级，看是否有低优先级的pod并且该pod处于terminating状态，如果是则返回false，表示不需要继续抢占，等待调度
 	if ok, msg := ev.PodEligibleToPreemptOthers(pod, m[pod.Status.NominatedNodeName]); !ok {
 		klog.V(5).InfoS("Pod is not eligible for preemption", "pod", klog.KObj(pod), "reason", msg)
 		return nil, framework.NewStatus(framework.Unschedulable, msg)
 	}
 
 	// 2) Find all preemption candidates.
+	// 查找所有优先权候选者。
 	candidates, nodeToStatusMap, err := ev.findCandidates(ctx, pod, m)
 	if err != nil && len(candidates) == 0 {
 		return nil, framework.AsStatus(err)
@@ -174,18 +177,21 @@ func (ev *Evaluator) Preempt(ctx context.Context, pod *v1.Pod, m framework.NodeT
 	}
 
 	// 3) Interact with registered Extenders to filter out some candidates if needed.
+	// 如果需要，与注册的扩展器交互以筛选出一些候选者。
 	candidates, status := ev.callExtenders(pod, candidates)
 	if !status.IsSuccess() {
 		return nil, status
 	}
 
 	// 4) Find the best candidate.
+	// 找到最好的候选人。
 	bestCandidate := ev.SelectCandidate(candidates)
 	if bestCandidate == nil || len(bestCandidate.Name()) == 0 {
 		return nil, framework.NewStatus(framework.Unschedulable, "no candidate node for preemption")
 	}
 
 	// 5) Perform preparation work before nominating the selected candidate.
+	// 在提名所选候选人之前进行准备工作。
 	if status := ev.prepareCandidate(ctx, bestCandidate, pod, ev.PluginName); !status.IsSuccess() {
 		return nil, status
 	}

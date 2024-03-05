@@ -1184,6 +1184,7 @@ func (f *frameworkImpl) RunPermitPlugins(ctx context.Context, state *framework.C
 			}
 		}
 	}
+	// 如果需要等待，则加入等待队列
 	if statusCode == framework.Wait {
 		waitingPod := newWaitingPod(pod, pluginsWaitTime)
 		f.waitingPods.add(waitingPod)

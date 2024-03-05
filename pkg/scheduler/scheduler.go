@@ -345,7 +345,7 @@ func New(client clientset.Interface,
 // Run begins watching and scheduling. It starts scheduling and blocked until the context is done.
 func (sched *Scheduler) Run(ctx context.Context) {
 	// 将所有在backoffQ 中到时间的 pod 移动到 activeQ中
-	// 将超过 最大为调度时间的 pod 移动到 backoffQ 或者 activeQ [当前时间减去 创建时间 大于 最大未调度时间]
+	// 将超过 最大未调度时间的 pod 移动到 backoffQ 或者 activeQ [当前时间减去 创建时间 大于 最大未调度时间]
 	sched.SchedulingQueue.Run()
 
 	// We need to start scheduleOne loop in a dedicated goroutine,

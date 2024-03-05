@@ -293,7 +293,8 @@ func NewPriorityQueue(
 func (p *PriorityQueue) Run() {
 	// 将所有在backoffQ 中到时间的 pod 移动到 activeQ中
 	go wait.Until(p.flushBackoffQCompleted, 1.0*time.Second, p.stop)
-	// 将超过 最大为调度时间的 pod 移动到 backoffQ 或者 activeQ [当前时间减去 创建时间 大于 最大未调度时间]
+	// 将超过 最大未调度时间的 pod 移动到 backoffQ 或者 activeQ [当前时间减去 创建时间 大于 最大未调度时间]
+	// 移动到两个队列哪一个，看是否处于退避时间内
 	go wait.Until(p.flushUnschedulablePodsLeftover, 30*time.Second, p.stop)
 }
 
@@ -646,6 +647,7 @@ func (p *PriorityQueue) movePodsToActiveOrBackoffQueue(podInfoList []*framework.
 		}
 		pod := pInfo.Pod
 		if p.isPodBackingoff(pInfo) {
+			// 移到backoffQ
 			if err := p.podBackoffQ.Add(pInfo); err != nil {
 				klog.ErrorS(err, "Error adding pod to the backoff queue", "pod", klog.KObj(pod))
 			} else {
@@ -653,6 +655,7 @@ func (p *PriorityQueue) movePodsToActiveOrBackoffQueue(podInfoList []*framework.
 				p.unschedulablePods.delete(pod)
 			}
 		} else {
+			// 移到activeQ
 			if err := p.activeQ.Add(pInfo); err != nil {
 				klog.ErrorS(err, "Error adding pod to the scheduling queue", "pod", klog.KObj(pod))
 			} else {

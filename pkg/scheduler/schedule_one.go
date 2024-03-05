@@ -71,6 +71,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		return
 	}
 	pod := podInfo.Pod
+	// 将注册的插件取出，用于计算调度打分
 	fwk, err := sched.frameworkForPod(pod)
 	if err != nil {
 		// This shouldn't happen, because we only accept for scheduling the pods
@@ -83,6 +84,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	// 两种情况会跳过调度
 	// 一、设置了删除字段DeletionTimestamp
 	// 二、是已经是 Assumed Pod （当pod完成了scheduler的Predicate和Priority后，立刻就设置为Assumed，之后再调用apiserver的Bind接口）
+	// 这里跳过是为了防止重复调度
 	if sched.skipPodSchedule(fwk, pod) {
 		return
 	}
@@ -95,6 +97,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	state := framework.NewCycleState()
 	state.SetRecordPluginMetrics(rand.Intn(100) < pluginMetricsSamplePercent)
 	// Initialize an empty podsToActivate struct, which will be filled up by plugins or stay empty.
+	// 暂时没用插件去填充该值
 	podsToActivate := framework.NewPodsToActivate()
 	state.Write(framework.PodsToActivateKey, podsToActivate)
 
@@ -102,19 +105,23 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	defer cancel()
 	// 开始 调度pod
 	// schedulePod 函数位于 318 行
-	// 返回的调度结果，会包含 建议的 h节点，参与评估的节点，可用的节点
+	// 返回的调度结果，会包含 建议的节点，参与评估的节点，可用的节点
 	scheduleResult, err := sched.SchedulePod(schedulingCycleCtx, fwk, state, pod)
 	if err != nil {
 		// SchedulePod() may have failed because the pod would not fit on any host, so we try to
 		// preempt, with the expectation that the next time the pod is tried for scheduling it
 		// will fit due to the preemption. It is also possible that a different pod will schedule
 		// into the resources that were preempted, but this is harmless.
+		//SchedulePod（）可能失败了，因为pod不适合任何主机，所以我们尝试抢占，期望下次尝试调度pod时，它会因为抢占而适合。
+		// 也有可能不同的pod会调度到被抢占的资源中，但这是无害的。
 		var nominatingInfo *framework.NominatingInfo
 		if fitError, ok := err.(*framework.FitError); ok {
+			// 判断有没有该插件
 			if !fwk.HasPostFilterPlugins() {
 				klog.V(3).InfoS("No PostFilter plugins are registered, so no preemption will be performed")
 			} else {
 				// Run PostFilter plugins to try to make the pod schedulable in a future scheduling cycle.
+				// 运行PostFilter插件，尝试使pod在未来的调度周期中可调度。
 				result, status := fwk.RunPostFilterPlugins(ctx, state, pod, fitError.Diagnosis.NodeToStatusMap)
 				if status.Code() == framework.Error {
 					klog.ErrorS(nil, "Status after running PostFilter plugins for pod", "pod", klog.KObj(pod), "status", status)
@@ -139,6 +146,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			klog.ErrorS(err, "Error selecting node for pod", "pod", klog.KObj(pod))
 			metrics.PodScheduleError(fwk.ProfileName(), metrics.SinceInSeconds(start))
 		}
+		//  将pod加入到 node的nominating pod队列中，在下次调度时进行抢占调度
 		sched.handleSchedulingFailure(ctx, fwk, podInfo, err, v1.PodReasonUnschedulable, nominatingInfo)
 		return
 	}
@@ -147,12 +155,13 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	// This allows us to keep scheduling without waiting on binding to occur.
 	// 告诉缓存假设一个pod现在正在给定的节点上运行，即使尚未绑定。
 	// 这使我们能够在不等待绑定发生的情况下保持调度。
+	// 预防多次调度【调度会定时执行】
 	assumedPodInfo := podInfo.DeepCopy()
 	assumedPod := assumedPodInfo.Pod
 	// assume modifies `assumedPod` by setting NodeName=scheduleResult.SuggestedHost
 	// 1、将 这个assumedPod 的NodeName 设置为建议的host
 	// 2、将这个pod加入到 assume pod的map内
-	// 3、 如果该pod已经在确定的pod里面，则需要将该pod从以确定pod列表中删除
+	// 3、 如果该pod已经在nominatorPod里面，则需要将该pod从以确定pod列表中删除
 	err = sched.assume(assumedPod, scheduleResult.SuggestedHost)
 	if err != nil {
 		metrics.PodScheduleError(fwk.ProfileName(), metrics.SinceInSeconds(start))
@@ -167,7 +176,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 
 	// Run the Reserve method of reserve plugins.
 	// 运行Reserve（预留）插件的Reserve方法。
-	// 将pod的调度存储起来，让各个插件可用获取到为pod预留的资源，因为绑定是异步的，
+	// 将pod的调度存储起来，让各个插件可以获取到为pod预留的资源，因为绑定是异步的，
 	// 目的是避免调度器在等待 Pod 与节点绑定的过程中调度新的 Pod 到节点上时，发生实际使用资源超出可用资源的情况。
 	if sts := fwk.RunReservePluginsReserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost); !sts.IsSuccess() {
 		metrics.PodScheduleError(fwk.ProfileName(), metrics.SinceInSeconds(start))
@@ -181,6 +190,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	}
 
 	// Run "permit" plugins.
+	// 可以阻止或延迟 Pod 绑定， 如果需要延迟或者等待，需要将pod加入到waitingPods
 	runPermitStatus := fwk.RunPermitPlugins(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 	if !runPermitStatus.IsWait() && !runPermitStatus.IsSuccess() {
 		var reason string
@@ -201,6 +211,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	}
 
 	// At the end of a successful scheduling cycle, pop and move up Pods if needed.
+	// 这里是将插件设置的在active这个结构中的pod移动到backoffQ,或者从中移除，但是暂时没用插件操作该结构，因此就不需要操作
 	if len(podsToActivate.Map) != 0 {
 		sched.SchedulingQueue.Activate(podsToActivate.Map)
 		// Clear the entries after activation.
@@ -208,12 +219,14 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	}
 
 	// bind the pod to its host asynchronously (we can do this b/c of the assumption step above).
+	// 进行绑定
 	go func() {
 		bindingCycleCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		metrics.SchedulerGoroutines.WithLabelValues(metrics.Binding).Inc()
 		defer metrics.SchedulerGoroutines.WithLabelValues(metrics.Binding).Dec()
 
+		// 如果需要等待，查看等待是否结束
 		waitOnPermitStatus := fwk.WaitOnPermit(bindingCycleCtx, assumedPod)
 		if !waitOnPermitStatus.IsSuccess() {
 			var reason string
@@ -225,6 +238,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 				reason = SchedulerError
 			}
 			// trigger un-reserve plugins to clean up state associated with the reserved Pod
+			// pod需要继续等待，所以释放资源，等待下次调度循环
 			fwk.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 			if forgetErr := sched.Cache.ForgetPod(assumedPod); forgetErr != nil {
 				klog.ErrorS(forgetErr, "scheduler cache ForgetPod failed")
@@ -244,10 +258,12 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		}
 
 		// Run "prebind" plugins.
+		// 预绑定
 		preBindStatus := fwk.RunPreBindPlugins(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		if !preBindStatus.IsSuccess() {
 			metrics.PodScheduleError(fwk.ProfileName(), metrics.SinceInSeconds(start))
 			// trigger un-reserve plugins to clean up state associated with the reserved Pod
+			// 绑定失败释放资源
 			fwk.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 			if forgetErr := sched.Cache.ForgetPod(assumedPod); forgetErr != nil {
 				klog.ErrorS(forgetErr, "scheduler cache ForgetPod failed")
@@ -315,6 +331,8 @@ func (sched *Scheduler) skipPodSchedule(fwk framework.Framework, pod *v1.Pod) bo
 	// Case 2: pod that has been assumed could be skipped.
 	// An assumed pod can be added again to the scheduling queue if it got an update event
 	// during its previous scheduling cycle but before getting assumed.
+	// 已经假设的pod可以被跳过。
+	// 如果该pod上一次调度还没有结束，并且也还没有被定位 assumedPod,则本次调度还是会将pod加入到调度队列中
 	// pkg/scheduler/internal/cache/fake/fake_cache.go
 	isAssumed, err := sched.Cache.IsAssumedPod(pod)
 	if err != nil {
@@ -349,6 +367,7 @@ func (sched *Scheduler) schedulePod(ctx context.Context, fwk framework.Framework
 	}
 	trace.Step("Computing predicates done")
 
+	// 如果没有可用节点，返回错误，返回后会记录相关事件
 	if len(feasibleNodes) == 0 {
 		return result, &framework.FitError{
 			Pod:         pod,
@@ -414,7 +433,8 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, fwk framework.F
 	// "NominatedNodeName" can potentially be set in a previous scheduling cycle as a result of preemption.
 	// This node is likely the only candidate that will fit the pod, and hence we try it first before iterating over all nodes.
 	// 由于抢占，“NominatedNodeName”可能会在上一个调度周期中设置。
-	// 这个节点可能是唯一适合pod的候选节点，因此我们在遍历所有节点之前首先尝试它。
+	// 这个节点可能是唯一适合pod的候选节点【因为可能进行了抢占】，因此我们在遍历所有节点之前首先尝试它。
+
 	if len(pod.Status.NominatedNodeName) > 0 {
 		feasibleNodes, err := sched.evaluateNominatedNode(ctx, pod, fwk, state, diagnosis)
 		if err != nil {
@@ -437,11 +457,13 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, fwk framework.F
 			nodes = append(nodes, nInfo)
 		}
 	}
+	// 通过 FilterPlugins 插件找寻合适的node
 	feasibleNodes, err := sched.findNodesThatPassFilters(ctx, fwk, state, pod, diagnosis, nodes)
 	if err != nil {
 		return nil, diagnosis, err
 	}
 
+	// 运行扩展插件【一般都没有扩展】
 	feasibleNodes, err = findNodesThatPassExtenders(sched.Extenders, pod, feasibleNodes, diagnosis.NodeToStatusMap)
 	if err != nil {
 		return nil, diagnosis, err
@@ -500,7 +522,7 @@ func (sched *Scheduler) findNodesThatPassFilters(
 		// We check the nodes starting from where we left off in the previous scheduling cycle,
 		// this is to make sure all nodes have the same chance of being examined across pods.
 		// 我们从上一个调度周期中停止的位置开始检查节点，
-		// 这是为了确保所有节点都有相同的机会跨pod进行检查。
+		// 这是为了确保所有节点都有相同的调度机会
 		nodeInfo := nodes[(sched.nextStartNodeIndex+i)%len(nodes)]
 		// 为这个 确定的node运行过滤插件
 		status := fwk.RunFilterPluginsWithNominatedPods(ctx, state, pod, nodeInfo)
@@ -777,7 +799,7 @@ func (sched *Scheduler) assume(assumed *v1.Pod, host string) error {
 		return err
 	}
 	// if "assumed" is a nominated pod, we should remove it from internal cache
-	// 如果pod已经是假定的，我们应该将其从内部缓存中删除
+	// 如果pod已经是假定的，我们应该将其从nominator内部缓存中删除
 	if sched.SchedulingQueue != nil {
 		sched.SchedulingQueue.DeleteNominatedPodIfExists(assumed)
 	}
@@ -858,6 +880,8 @@ func (sched *Scheduler) handleSchedulingFailure(ctx context.Context, fwk framewo
 	pod := podInfo.Pod
 	msg := truncateMessage(err.Error())
 	fwk.EventRecorder().Eventf(pod, nil, v1.EventTypeWarning, "FailedScheduling", "Scheduling", msg)
+
+	// 为pod设置status.NominatedNodeName
 	if err := updatePod(ctx, sched.client, pod, &v1.PodCondition{
 		Type:    v1.PodScheduled,
 		Status:  v1.ConditionFalse,
