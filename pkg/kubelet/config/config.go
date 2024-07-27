@@ -234,6 +234,7 @@ func (s *podStorage) merge(source string, change interface{}) (adds, updates, de
 			if ref.Annotations == nil {
 				ref.Annotations = make(map[string]string)
 			}
+			// 这里会写入 kubernetes.io/config.source 来区分，pod来源，分为 file【静态pod】，http【自定义的http接口pod】 api【监听apiserver的pod】
 			ref.Annotations[kubetypes.ConfigSourceAnnotationKey] = source
 			if existing, found := oldPods[ref.UID]; found {
 				pods[ref.UID] = existing

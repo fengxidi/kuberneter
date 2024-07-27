@@ -122,6 +122,7 @@ func NewKubeletCommand() *cobra.Command {
 	cleanFlagSet.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
 	kubeletFlags := options.NewKubeletFlags()
 
+	// k8s 的kubeconfig
 	kubeletConfig, err := options.NewKubeletConfiguration()
 	// programmer error
 	if err != nil {
@@ -172,6 +173,7 @@ HTTP server: The kubelet can also listen for HTTP and respond to a simple API
 			}
 
 			// short-circuit on help
+			// 打印帮助信息
 			help, err := cleanFlagSet.GetBool("help")
 			if err != nil {
 				return errors.New(`"help" flag is non-bool, programmer error, please correct`)
@@ -181,14 +183,17 @@ HTTP server: The kubelet can also listen for HTTP and respond to a simple API
 			}
 
 			// short-circuit on verflag
+			// 如果打印版本
 			verflag.PrintAndExitIfRequested()
 
 			// set feature gates from initial flags-based config
+			// 设置功能特性开关
 			if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(kubeletConfig.FeatureGates); err != nil {
 				return fmt.Errorf("failed to set feature gates from initial flags-based config: %w", err)
 			}
 
 			// validate the initial KubeletFlags
+			// 验证参数
 			if err := options.ValidateKubeletFlags(kubeletFlags); err != nil {
 				return fmt.Errorf("failed to validate kubelet flags: %w", err)
 			}
@@ -198,6 +203,7 @@ HTTP server: The kubelet can also listen for HTTP and respond to a simple API
 			}
 
 			// load kubelet config file, if provided
+			// 从文件获取配置
 			if configFile := kubeletFlags.KubeletConfigFile; len(configFile) > 0 {
 				kubeletConfig, err = loadConfigFile(configFile)
 				if err != nil {
@@ -216,10 +222,13 @@ HTTP server: The kubelet can also listen for HTTP and respond to a simple API
 			}
 
 			// Config and flags parsed, now we can initialize logging.
+			// 初始化日志
 			logs.InitLogs()
+			// 是否启动上下文日志记录
 			if err := logsapi.ValidateAndApplyAsField(&kubeletConfig.Logging, utilfeature.DefaultFeatureGate, field.NewPath("logging")); err != nil {
 				return fmt.Errorf("initialize logging: %v", err)
 			}
+			// 打印配置
 			cliflag.PrintFlags(cleanFlagSet)
 
 			// We always validate the local configuration (command line + config file).
@@ -228,6 +237,7 @@ HTTP server: The kubelet can also listen for HTTP and respond to a simple API
 				return fmt.Errorf("failed to validate kubelet configuration, error: %w, path: %s", err, kubeletConfig)
 			}
 
+			// 检查cgroup配置
 			if (kubeletConfig.KubeletCgroups != "" && kubeletConfig.KubeReservedCgroup != "") && (strings.Index(kubeletConfig.KubeletCgroups, kubeletConfig.KubeReservedCgroup) != 0) {
 				klog.InfoS("unsupported configuration:KubeletCgroups is not within KubeReservedCgroup")
 			}
@@ -261,9 +271,11 @@ HTTP server: The kubelet can also listen for HTTP and respond to a simple API
 				config.StaticPodURLHeader[k] = []string{"<masked>"}
 			}
 			// log the kubelet's config for inspection
+			// 打印配置
 			klog.V(5).InfoS("KubeletConfiguration", "configuration", config)
 
 			// set up signal context for kubelet shutdown
+			// 注册信号处理 ，注册了 SIGINT 信号
 			ctx := genericapiserver.SetupSignalContext()
 
 			// run the kubelet
@@ -271,6 +283,7 @@ HTTP server: The kubelet can also listen for HTTP and respond to a simple API
 		},
 	}
 
+	// 配置传参
 	// keep cleanFlagSet separate, so Cobra doesn't pollute it with the global flags
 	kubeletFlags.AddFlags(cleanFlagSet)
 	options.AddKubeletConfigFlags(cleanFlagSet, kubeletConfig)
@@ -488,6 +501,7 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
 	}
 
 	// Warn if MemoryQoS enabled with cgroups v1
+	// 验证内存Qos
 	if utilfeature.DefaultFeatureGate.Enabled(features.MemoryQoS) &&
 		!isCgroup2UnifiedMode() {
 		klog.InfoS("Warning: MemoryQoS feature only works with cgroups v2 on Linux, but enabled with cgroups v1")
@@ -626,7 +640,7 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
 	if err != nil {
 		klog.InfoS("Failed to get the container runtime's cgroup. Runtime system container metrics may be missing.", "err", err)
 	} else if s.RuntimeCgroups != "" {
-		// RuntimeCgroups is optional, so ignore if it isn't specified
+		// RuntimeCgroups is optional, so ignore if it isn't RuntimeCgroups
 		cgroupRoots = append(cgroupRoots, s.RuntimeCgroups)
 	}
 
@@ -764,6 +778,7 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
 		return err
 	}
 
+	// 开启健康检查，默认在10248 端口
 	if s.HealthzPort > 0 {
 		mux := http.NewServeMux()
 		healthz.InstallHandler(mux)
@@ -1175,6 +1190,7 @@ func RunKubelet(kubeServer *options.KubeletServer, kubeDeps *kubelet.Dependencie
 
 	// process pods and exit.
 	if runOnce {
+		// RunOnce 主要用于处理静态 Pod  也就是那些直接定义在 kubelet 配置文件中，或者存储在 kubelet 指定的某个文件夹中的 Pod 定义。
 		if _, err := k.RunOnce(podCfg.Updates()); err != nil {
 			return fmt.Errorf("runonce failed: %w", err)
 		}
@@ -1194,6 +1210,7 @@ func startKubelet(k kubelet.Bootstrap, podCfg *config.PodConfig, kubeCfg *kubele
 	if enableServer {
 		go k.ListenAndServe(kubeCfg, kubeDeps.TLSOptions, kubeDeps.Auth)
 	}
+	// 默认监听在10255端口
 	if kubeCfg.ReadOnlyPort > 0 {
 		go k.ListenAndServeReadOnly(netutils.ParseIPSloppy(kubeCfg.Address), uint(kubeCfg.ReadOnlyPort))
 	}

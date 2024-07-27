@@ -37,6 +37,7 @@ import (
 
 // createPodSandbox creates a pod sandbox and returns (podSandBoxID, message, error).
 func (m *kubeGenericRuntimeManager) createPodSandbox(pod *v1.Pod, attempt uint32) (string, string, error) {
+	// 生成相关配置
 	podSandboxConfig, err := m.generatePodSandboxConfig(pod, attempt)
 	if err != nil {
 		message := fmt.Sprintf("Failed to generate sandbox config for pod %q: %v", format.Pod(pod), err)
@@ -45,6 +46,7 @@ func (m *kubeGenericRuntimeManager) createPodSandbox(pod *v1.Pod, attempt uint32
 	}
 
 	// Create pod logs directory
+	// 创建pod日志路径
 	err = m.osInterface.MkdirAll(podSandboxConfig.LogDirectory, 0755)
 	if err != nil {
 		message := fmt.Sprintf("Failed to create log directory for pod %q: %v", format.Pod(pod), err)
@@ -90,6 +92,7 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxConfig(pod *v1.Pod, attemp
 		Annotations: newPodAnnotations(pod),
 	}
 
+	// dns 配置 pod.spec.DNSPolicy
 	dnsConfig, err := m.runtimeHelper.GetPodDNS(pod)
 	if err != nil {
 		return nil, err
@@ -106,6 +109,7 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxConfig(pod *v1.Pod, attemp
 		if err != nil {
 			return nil, err
 		}
+		// 配置容器的hostname
 		podSandboxConfig.Hostname = podHostname
 	}
 
@@ -130,10 +134,12 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxConfig(pod *v1.Pod, attemp
 		}
 
 	}
+	// 配置端口
 	if len(portMappings) > 0 {
 		podSandboxConfig.PortMappings = portMappings
 	}
 
+	// 配置cgroup和SecurityContext
 	lc, err := m.generatePodSandboxLinuxConfig(pod)
 	if err != nil {
 		return nil, err
@@ -149,6 +155,7 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxConfig(pod *v1.Pod, attemp
 	}
 
 	// Update config to include overhead, sandbox level resources
+	// 计算后设置 资源参数，如 内存的limit，cpu的quota和period
 	if err := m.applySandboxResources(pod, podSandboxConfig); err != nil {
 		return nil, err
 	}
@@ -160,6 +167,9 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxConfig(pod *v1.Pod, attemp
 // podSandboxConfig. It is currently part of LinuxPodSandboxConfig. In future, if we have securityContext pulled out
 // in podSandboxConfig we should be able to use it.
 func (m *kubeGenericRuntimeManager) generatePodSandboxLinuxConfig(pod *v1.Pod) (*runtimeapi.LinuxPodSandboxConfig, error) {
+	// 返回的是 cgroup的路径
+	// 例如pod名称是 1234-abcd-5678-efgh， Qos是burstable
+	// 则返回 "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod1234_abcd_5678_efgh.slice"
 	cgroupParent := m.runtimeHelper.GetPodCgroupParent(pod)
 	lc := &runtimeapi.LinuxPodSandboxConfig{
 		CgroupParent: cgroupParent,

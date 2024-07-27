@@ -511,6 +511,7 @@ func (m *localVolumeMounter) GetAttributes() volume.Attributes {
 }
 
 // SetUp bind mounts the directory to the volume path
+// bind将目录装载到卷路径
 func (m *localVolumeMounter) SetUp(mounterArgs volume.MounterArgs) error {
 	return m.SetUpAt(m.GetPath(), mounterArgs)
 }

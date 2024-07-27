@@ -111,11 +111,13 @@ func getReclaimableThreshold(thresholds []evictionapi.Threshold) (evictionapi.Th
 // ParseThresholdConfig parses the flags for thresholds.
 func ParseThresholdConfig(allocatableConfig []string, evictionHard, evictionSoft, evictionSoftGracePeriod, evictionMinimumReclaim map[string]string) ([]evictionapi.Threshold, error) {
 	results := []evictionapi.Threshold{}
+	// 硬阈值
 	hardThresholds, err := parseThresholdStatements(evictionHard)
 	if err != nil {
 		return nil, err
 	}
 	results = append(results, hardThresholds...)
+	// 软阈值
 	softThresholds, err := parseThresholdStatements(evictionSoft)
 	if err != nil {
 		return nil, err

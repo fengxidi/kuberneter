@@ -86,6 +86,7 @@ func (cgroupName CgroupName) ToSystemd() string {
 	}
 	newparts := []string{}
 	for _, part := range cgroupName {
+		// 将 pod名称中的 - 换成 _ 保证后续的拼接正常
 		part = escapeSystemdCgroupName(part)
 		newparts = append(newparts, part)
 	}
@@ -463,6 +464,8 @@ func (m *cgroupManagerImpl) Create(cgroupConfig *CgroupConfig) error {
 	// It creates cgroup files for each subsystems and writes the pid
 	// in the tasks file. We use the function to create all the required
 	// cgroup files but not attach any "real" pid to the cgroup.
+	// /Apply（-1）是为每个资源子系统创建cgroup目录的破解方法。函数[cgroups.Manager.apply（）]将cgroup配置应用于具有指定pid的进程。
+	//它为每个子系统创建cgroup文件，并将pid写入任务文件。我们使用该函数来创建所有必需的cgroup文件，但不将任何“真实”pid附加到cgroup。
 	if err := manager.Apply(-1); err != nil {
 		return err
 	}

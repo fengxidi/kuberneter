@@ -278,7 +278,8 @@ func (f *KubeletFlags) AddFlags(mainfs *pflag.FlagSet) {
 		})
 		mainfs.AddFlagSet(fs)
 	}()
-
+	// 添加 参数
+	// container-runtime，pod-infra-container-image",等
 	f.ContainerRuntimeOptions.AddFlags(fs)
 	f.addOSFlags(fs)
 

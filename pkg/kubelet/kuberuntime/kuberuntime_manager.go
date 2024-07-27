@@ -479,11 +479,13 @@ func (m *kubeGenericRuntimeManager) podSandboxChanged(pod *v1.Pod, podStatus *ku
 
 	// Needs to create a new sandbox when readySandboxCount > 1 or the ready sandbox is not the latest one.
 	sandboxStatus := podStatus.SandboxStatuses[0]
+	// 当就绪的sandbox大于1时，说明出现了问题，正常情况一个pod只有一个sandbox
 	if readySandboxCount > 1 {
 		klog.V(2).InfoS("Multiple sandboxes are ready for Pod. Need to reconcile them", "pod", klog.KObj(pod))
 
 		return true, sandboxStatus.Metadata.Attempt + 1, sandboxStatus.Id
 	}
+	// 这个sandbox未就绪
 	if sandboxStatus.State != runtimeapi.PodSandboxState_SANDBOX_READY {
 		klog.V(2).InfoS("No ready sandbox for pod can be found. Need to start a new one", "pod", klog.KObj(pod))
 		return true, sandboxStatus.Metadata.Attempt + 1, sandboxStatus.Id
@@ -710,6 +712,7 @@ func (m *kubeGenericRuntimeManager) computePodActions(pod *v1.Pod, podStatus *ku
 //  7. Create normal containers.
 func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontainer.PodStatus, pullSecrets []v1.Secret, backOff *flowcontrol.Backoff) (result kubecontainer.PodSyncResult) {
 	// Step 1: Compute sandbox and container changes.
+	// 计算改变 容器状态
 	podContainerChanges := m.computePodActions(pod, podStatus)
 	klog.V(3).InfoS("computePodActions got for pod", "podActions", podContainerChanges, "pod", klog.KObj(pod))
 	if podContainerChanges.CreateSandbox {
@@ -725,6 +728,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 	}
 
 	// Step 2: Kill the pod if the sandbox has changed.
+	// 如果有改变，则将容器kill
 	if podContainerChanges.KillPod {
 		if podContainerChanges.CreateSandbox {
 			klog.V(4).InfoS("Stopping PodSandbox for pod, will start new one", "pod", klog.KObj(pod))
@@ -744,6 +748,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 		}
 	} else {
 		// Step 3: kill any running containers in this pod which are not to keep.
+		//
 		for containerID, containerInfo := range podContainerChanges.ContainersToKill {
 			klog.V(3).InfoS("Killing unwanted container for pod", "containerName", containerInfo.name, "containerID", containerID, "pod", klog.KObj(pod))
 			killContainerResult := kubecontainer.NewSyncResult(kubecontainer.KillContainer, containerInfo.name)
@@ -759,6 +764,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 	// Keep terminated init containers fairly aggressively controlled
 	// This is an optimization because container removals are typically handled
 	// by container garbage collector.
+	//严格控制终止的init容器这是一个优化，因为容器的删除通常由容器垃圾收集器处理。
 	m.pruneInitContainersBeforeStart(pod, podStatus)
 
 	// We pass the value of the PRIMARY podIP and list of podIPs down to
@@ -771,12 +777,14 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 	//
 	// We default to the IPs in the passed-in pod status, and overwrite them if the
 	// sandbox needs to be (re)started.
+	// 提取ip，ip在创建pod后，cni插件的ip管理器就会进行分配
 	var podIPs []string
 	if podStatus != nil {
 		podIPs = podStatus.IPs
 	}
 
 	// Step 4: Create a sandbox for the pod if necessary.
+	// 创建沙箱
 	podSandboxID := podContainerChanges.SandboxID
 	if podContainerChanges.CreateSandbox {
 		var msg string
@@ -797,6 +805,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 		// When runc supports slash as sysctl separator, this function can no longer be used.
 		sysctl.ConvertPodSysctlsVariableToDotsSeparator(pod.Spec.SecurityContext)
 
+		// 创建一个沙盒，实际就是pause容器，后续可以将其他的容器加入这个沙盒
 		podSandboxID, msg, err = m.createPodSandbox(pod, podContainerChanges.Attempt)
 		if err != nil {
 			// createPodSandbox can return an error from CNI, CSI,
@@ -910,6 +919,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 		return nil
 	}
 
+	// 启动临时容器
 	// Step 5: start ephemeral containers
 	// These are started "prior" to init containers to allow running ephemeral containers even when there
 	// are errors starting an init container. In practice init containers will start first since ephemeral
@@ -921,6 +931,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 	}
 
 	// Step 6: start the init container.
+	// 启动初始化容器
 	if container := podContainerChanges.NextInitContainerToStart; container != nil {
 		// Start the next init container.
 		if err := start("init container", metrics.InitContainer, containerStartSpec(container)); err != nil {
@@ -932,6 +943,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 	}
 
 	// Step 7: start containers in podContainerChanges.ContainersToStart.
+	// 启动业务容器
 	for _, idx := range podContainerChanges.ContainersToStart {
 		start("container", metrics.Container, containerStartSpec(&pod.Spec.Containers[idx]))
 	}
@@ -1039,6 +1051,7 @@ func (m *kubeGenericRuntimeManager) GetPodStatus(uid kubetypes.UID, name, namesp
 	sandboxStatuses := []*runtimeapi.PodSandboxStatus{}
 	podIPs := []string{}
 	for idx, podSandboxID := range podSandboxIDs {
+		// 获取pod 的sandbox状态
 		resp, err := m.runtimeService.PodSandboxStatus(podSandboxID, false)
 		// Between List (getSandboxIDByPodUID) and check (PodSandboxStatus) another thread might remove a container, and that is normal.
 		// The previous call (getSandboxIDByPodUID) never fails due to a pod sandbox not existing.
@@ -1058,11 +1071,13 @@ func (m *kubeGenericRuntimeManager) GetPodStatus(uid kubetypes.UID, name, namesp
 		sandboxStatuses = append(sandboxStatuses, resp.Status)
 		// Only get pod IP from latest sandbox
 		if idx == 0 && resp.Status.State == runtimeapi.PodSandboxState_SANDBOX_READY {
+			// 确定一下ip
 			podIPs = m.determinePodSandboxIPs(namespace, name, resp.Status)
 		}
 	}
 
 	// Get statuses of all containers visible in the pod.
+	// 获取所有容器状态
 	containerStatuses, err := m.getPodContainerStatuses(uid, name, namespace)
 	if err != nil {
 		if m.logReduction.ShouldMessageBePrinted(err.Error(), podFullName) {

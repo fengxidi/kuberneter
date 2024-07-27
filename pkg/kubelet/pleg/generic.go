@@ -200,17 +200,20 @@ func (g *GenericPLEG) relist() {
 	}()
 
 	// Get all the pods.
+	// 获取全部的pod
 	podList, err := g.runtime.GetPods(true)
 	if err != nil {
 		klog.ErrorS(err, "GenericPLEG: Unable to retrieve pods")
 		return
 	}
 
+	// 更新 relist的时间
 	g.updateRelistTime(timestamp)
 
 	pods := kubecontainer.Pods(podList)
 	// update running pod and container count
 	updateRunningPodAndContainerMetrics(pods)
+	//  记录当前的pod
 	g.podRecords.setCurrent(pods)
 
 	// Compare the old and the current pods, and generate events.
@@ -247,6 +250,7 @@ func (g *GenericPLEG) relist() {
 			// inspecting the pod and getting the PodStatus to update the cache
 			// serially may take a while. We should be aware of this and
 			// parallelize if needed.
+			// 这里面会更新状态
 			if err := g.updateCache(pod, pid); err != nil {
 				// Rely on updateCache calling GetPodStatus to log the actual error.
 				klog.V(4).ErrorS(err, "PLEG: Ignoring events for pod", "pod", klog.KRef(pod.Namespace, pod.Name))
@@ -259,10 +263,13 @@ func (g *GenericPLEG) relist() {
 				// this pod was in the list to reinspect and we did so because it had events, so remove it
 				// from the list (we don't want the reinspection code below to inspect it a second time in
 				// this relist execution)
+				// 这个pod在列表中需要重新检查，我们这样做是因为它有事件，所以从列表中删除它（我们不希望下面的重新检查代码在这次重新列表执行中再次检查它）
+				// 本次同步撑高，防止下面的同步再次运行
 				delete(g.podsToReinspect, pid)
 			}
 		}
 		// Update the internal storage and send out the events.
+		// 将获取的pod的新的状态，更新到记录的r.old 中
 		g.podRecords.update(pid)
 
 		// Map from containerId to exit code; used as a temporary cache for lookup
@@ -280,6 +287,7 @@ func (g *GenericPLEG) relist() {
 				klog.ErrorS(nil, "Event channel is full, discard this relist() cycle event")
 			}
 			// Log exit code of containers when they finished in a particular event
+			// 容器结束
 			if events[i].Type == ContainerDied {
 				// Fill up containerExitCode map for ContainerDied event when first time appeared
 				if len(containerExitCode) == 0 && pod != nil && g.cache != nil {
@@ -302,6 +310,7 @@ func (g *GenericPLEG) relist() {
 
 	if g.cacheEnabled() {
 		// reinspect any pods that failed inspection during the previous relist
+		// 同步上次同步失败，切这次还是同步失败的pod
 		if len(g.podsToReinspect) > 0 {
 			klog.V(5).InfoS("GenericPLEG: Reinspecting pods that previously failed inspection")
 			for pid, pod := range g.podsToReinspect {
@@ -400,6 +409,7 @@ func (g *GenericPLEG) updateCache(pod *kubecontainer.Pod, pid types.UID) error {
 	// TODO: Consider adding a new runtime method
 	// GetPodStatus(pod *kubecontainer.Pod) so that Docker can avoid listing
 	// all containers again.
+	// 获取pod 的状态
 	status, err := g.runtime.GetPodStatus(pod.ID, pod.Name, pod.Namespace)
 	if err != nil {
 		// nolint:logcheck // Not using the result of klog.V inside the
@@ -423,6 +433,7 @@ func (g *GenericPLEG) updateCache(pod *kubecontainer.Pod, pid types.UID) error {
 		status.IPs = g.getPodIPs(pid, status)
 	}
 
+	// 更新缓存
 	g.cache.Set(pod.ID, status, err, timestamp)
 	return err
 }

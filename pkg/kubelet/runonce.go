@@ -116,6 +116,8 @@ func (kl *Kubelet) runPod(pod *v1.Pod, retryDelay time.Duration) error {
 	delay := retryDelay
 	retry := 0
 	for !isTerminal {
+		// 获取 pod的状态，调用了cri接口PodSandboxStatus，ContainerStatus
+		// 对于容器状态，是先通过条件过滤了pod下的所有容器，然后再一一调用ContainerStatus
 		status, err := kl.containerRuntime.GetPodStatus(pod.UID, pod.Name, pod.Namespace)
 		if err != nil {
 			return fmt.Errorf("unable to get status for pod %q: %v", format.Pod(pod), err)
@@ -131,7 +133,9 @@ func (kl *Kubelet) runPod(pod *v1.Pod, retryDelay time.Duration) error {
 		if err := kl.podManager.CreateMirrorPod(pod); err != nil {
 			klog.ErrorS(err, "Failed creating a mirror pod", "pod", klog.KObj(pod))
 		}
+		// 这里返回的是通过静态文件由kubelet自己创建的pod
 		mirrorPod, _ := kl.podManager.GetMirrorPodByPod(pod)
+		// 开始同步pod
 		if isTerminal, err = kl.syncPod(context.Background(), kubetypes.SyncPodUpdate, pod, mirrorPod, status); err != nil {
 			return fmt.Errorf("error syncing pod %q: %v", format.Pod(pod), err)
 		}

@@ -41,6 +41,7 @@ func (m *kubeGenericRuntimeManager) convertOverheadToLinuxResources(pod *v1.Pod)
 
 func (m *kubeGenericRuntimeManager) calculateSandboxResources(pod *v1.Pod) *runtimeapi.LinuxContainerResources {
 	req, lim := resourcehelper.PodRequestsAndLimitsWithoutOverhead(pod)
+	// 计算后得到的是 内存的limit参数和 cpu的 quota和period参数
 	return m.calculateLinuxResources(req.Cpu(), lim.Cpu(), lim.Memory())
 }
 

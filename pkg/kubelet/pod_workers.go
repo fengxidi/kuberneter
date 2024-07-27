@@ -545,6 +545,8 @@ func (p *podWorkers) UpdatePod(options UpdatePodOptions) {
 	// the terminating part of the lifecycle
 	pod := options.Pod
 	var isRuntimePod bool
+	// 对于创建的pod而已，这里是 nil
+	// 只有对于  HandlePodCleanups() 处理的pod才会有 RunningPod
 	if options.RunningPod != nil {
 		if options.Pod == nil {
 			pod = options.RunningPod.ToAPIPod()
@@ -705,6 +707,7 @@ func (p *podWorkers) UpdatePod(options UpdatePodOptions) {
 
 	// start the pod worker goroutine if it doesn't exist
 	podUpdates, exists := p.podUpdates[uid]
+	// 不存在，说明是一个新建的pod，则启动一个goroutine单独维护pod
 	if !exists {
 		// We need to have a buffer here, because checkForUpdates() method that
 		// puts an update into channel is called from the same goroutine where
@@ -731,6 +734,7 @@ func (p *podWorkers) UpdatePod(options UpdatePodOptions) {
 		// kubelet just restarted. In either case the kubelet is willing to believe
 		// the status of the pod for the first pod worker sync. See corresponding
 		// comment in syncPod.
+		// 为 pod启动一个goroutine 进行管理
 		go func() {
 			defer runtime.HandleCrash()
 			p.managePodLoop(outCh)
@@ -933,6 +937,7 @@ func (p *podWorkers) managePodLoop(podUpdates <-chan podWork) {
 				err = p.syncTerminatingPodFn(ctx, pod, status, update.Options.RunningPod, gracePeriod, podStatusFn)
 
 			default:
+				// 开始同步pod
 				isTerminal, err = p.syncPodFn(ctx, update.Options.UpdateType, pod, update.Options.MirrorPod, status)
 			}
 

@@ -114,6 +114,10 @@ type LeaderElectionRecord struct {
 	// attempt to acquire leases with empty identities and will wait for the full lease
 	// interval to expire before attempting to reacquire. This value is set to empty when
 	// a client voluntarily steps down.
+	// 持有人身份
+	//HolderIdentity是拥有租约的ID。如果为空，则没有人拥有此租约，
+	//所有呼叫者都可以获得。此库在Kubernetes 1.14之前的版本不会尝试获取具有空标识的租约，
+	//并且会等待整个租约间隔到期后再尝试重新获取。当客户自愿退出时，此值设置为空。
 	HolderIdentity       string      `json:"holderIdentity"`
 	LeaseDurationSeconds int         `json:"leaseDurationSeconds"`
 	AcquireTime          metav1.Time `json:"acquireTime"`

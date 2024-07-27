@@ -93,7 +93,7 @@ func NewOptions() *Options {
 			LeaseDuration:     metav1.Duration{Duration: 15 * time.Second}, // 租约超时
 			RenewDeadline:     metav1.Duration{Duration: 10 * time.Second}, // 截至Lease续订时间
 			RetryPeriod:       metav1.Duration{Duration: 2 * time.Second},  // 重试区间
-			ResourceLock:      "leases",
+			ResourceLock:      "leases",                                    // 使用的是leases锁
 			ResourceName:      "kube-scheduler",
 			ResourceNamespace: "kube-system",
 		},
@@ -333,6 +333,7 @@ func makeLeaderElectionConfig(config componentbaseconfig.LeaderElectionConfigura
 		return nil, fmt.Errorf("unable to get hostname: %v", err)
 	}
 	// add a uniquifier so that two processes on the same host don't accidentally both become active
+	// 生成锁ID
 	id := hostname + "_" + string(uuid.NewUUID())
 
 	rl, err := resourcelock.NewFromKubeconfig(config.ResourceLock,

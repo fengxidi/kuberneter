@@ -395,6 +395,7 @@ func (vm *volumeManager) WaitForAttachAndMount(pod *v1.Pod) error {
 		return nil
 	}
 
+	// 返回设置的volumesMounts名称
 	expectedVolumes := getExpectedVolumes(pod)
 	if len(expectedVolumes) == 0 {
 		// No volumes to verify
@@ -409,6 +410,8 @@ func (vm *volumeManager) WaitForAttachAndMount(pod *v1.Pod) error {
 	// like Downward API, depend on this to update the contents of the volume).
 	vm.desiredStateOfWorldPopulator.ReprocessPod(uniquePodName)
 
+	// 立即轮询
+	// 判断全部volumes是否已经绑定pod
 	err := wait.PollImmediate(
 		podAttachAndMountRetryInterval,
 		podAttachAndMountTimeout,

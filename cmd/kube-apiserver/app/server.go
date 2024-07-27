@@ -116,6 +116,7 @@ cluster's shared state through which all other components interact.`,
 			cliflag.PrintFlags(fs)
 
 			// set default options
+			// 设置默认的配置
 			completedOptions, err := Complete(s)
 			if err != nil {
 				return err
@@ -199,6 +200,7 @@ func CreateServerChain(completedOptions completedServerRunOptions) (*aggregatora
 	}
 
 	// aggregator comes last in the chain
+	// 处理k8s扩展点: 聚合API
 	aggregatorConfig, err := createAggregatorConfig(*kubeAPIServerConfig.GenericConfig, completedOptions.ServerRunOptions, kubeAPIServerConfig.ExtraConfig.VersionedInformers, serviceResolver, kubeAPIServerConfig.ExtraConfig.ProxyTransport, pluginInitializer)
 	if err != nil {
 		return nil, err

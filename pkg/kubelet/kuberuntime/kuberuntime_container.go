@@ -200,6 +200,7 @@ func (m *kubeGenericRuntimeManager) startContainer(podSandboxID string, podSandb
 		// We are checking to see if the log directory exists, and find
 		// the latest restartCount by checking the log name -
 		// {restartCount}.log - and adding 1 to it.
+		// 日志是通过重启次数进行命名的 例如重启 23次，则是 23.log
 		logDir := BuildContainerLogsDirectory(pod.Namespace, pod.Name, pod.UID, container.Name)
 		restartCount, err = calcRestartCountByLogDir(logDir)
 		if err != nil {

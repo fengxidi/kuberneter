@@ -216,6 +216,7 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 
 	// If leader election is enabled, runCommand via LeaderElector until done and exit.
 	// 如果启用了领导人选举，请通过LeaderElector运行Command，直到完成并退出。
+	// scheduler 默认开启了leader选举，查看opts := options.NewOptions() 定义了 lease类型的锁
 	if cc.LeaderElection != nil {
 		cc.LeaderElection.Callbacks = leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {

@@ -203,12 +203,15 @@ func (le *LeaderElector) Run(ctx context.Context) {
 		le.config.Callbacks.OnStoppedLeading()
 	}()
 
+	// 获取锁
 	if !le.acquire(ctx) {
 		return // ctx signalled done
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// 启动正式的任务
 	go le.config.Callbacks.OnStartedLeading(ctx)
+	// 不断获取锁
 	le.renew(ctx)
 }
 
@@ -262,6 +265,7 @@ func (le *LeaderElector) acquire(ctx context.Context) bool {
 }
 
 // renew loops calling tryAcquireOrRenew and returns immediately when tryAcquireOrRenew fails or ctx signals done.
+//renew循环调用tryAcquireOrRenew，并在tryAcquireOrRenew失败或ctx信号完成时立即返回。
 func (le *LeaderElector) renew(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -324,6 +328,7 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	}
 
 	// 1. obtain or create the ElectionRecord
+	//1.获取或创建选举记录
 	oldLeaderElectionRecord, oldLeaderElectionRawRecord, err := le.config.Lock.Get(ctx)
 	if err != nil {
 		if !errors.IsNotFound(err) {
@@ -341,11 +346,16 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	}
 
 	// 2. Record obtained, check the Identity & Time
+	// 获取记录，检查身份和时间
 	if !bytes.Equal(le.observedRawRecord, oldLeaderElectionRawRecord) {
 		le.setObservedRecord(oldLeaderElectionRecord)
 
 		le.observedRawRecord = oldLeaderElectionRawRecord
 	}
+	// 有持有者ID【HolderIdentity】，
+	//观察时间 还没有过期
+	// 并且不是领导者
+	// 持有者ID，是当前节点的ID
 	if len(oldLeaderElectionRecord.HolderIdentity) > 0 &&
 		le.observedTime.Add(le.config.LeaseDuration).After(now.Time) &&
 		!le.IsLeader() {
@@ -355,6 +365,8 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 
 	// 3. We're going to try to update. The leaderElectionRecord is set to it's default
 	// here. Let's correct it before updating.
+	// 3.我们将尝试更新。leaderElectionRecord设置为默认值
+	//在这里让我们在更新之前进行更正。
 	if le.IsLeader() {
 		leaderElectionRecord.AcquireTime = oldLeaderElectionRecord.AcquireTime
 		leaderElectionRecord.LeaderTransitions = oldLeaderElectionRecord.LeaderTransitions
@@ -363,6 +375,7 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	}
 
 	// update the lock itself
+	// 续订
 	if err = le.config.Lock.Update(ctx, leaderElectionRecord); err != nil {
 		klog.Errorf("Failed to update lock: %v", err)
 		return false

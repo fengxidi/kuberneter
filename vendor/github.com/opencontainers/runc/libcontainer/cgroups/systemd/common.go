@@ -81,6 +81,7 @@ func ExpandSlice(slice string) (string, error) {
 
 		// Append the component to the path and to the prefix.
 		path += "/" + prefix + component + suffix
+		//
 		prefix += component + "-"
 	}
 	return path, nil
