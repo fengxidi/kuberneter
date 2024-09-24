@@ -248,7 +248,9 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 
 	// The unique volume name used depends on whether the volume is attachable/device-mountable
 	// or not.
+	// 检查volume是否 可以attach
 	attachable := util.IsAttachableVolume(volumeSpec, dsw.volumePluginMgr)
+	// device 可以mount
 	deviceMountable := util.IsDeviceMountableVolume(volumeSpec, dsw.volumePluginMgr)
 	if attachable || deviceMountable {
 		// For attachable/device-mountable volumes, use the unique volume name as reported by
@@ -271,6 +273,7 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 	if _, volumeExists := dsw.volumesToMount[volumeName]; !volumeExists {
 		var sizeLimit *resource.Quantity
 		if volumeSpec.Volume != nil {
+			// 是本地临时卷 ，emprydir[medium ==""],configmap
 			if util.IsLocalEphemeralVolume(*volumeSpec.Volume) {
 				_, podLimits := apiv1resource.PodRequestsAndLimits(pod)
 				ephemeralStorageLimit := podLimits[v1.ResourceEphemeralStorage]
@@ -283,6 +286,7 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 				}
 			}
 		}
+		// 对于本地临时卷需要限制使用大小
 		vmt := volumeToMount{
 			volumeName:              volumeName,
 			podsToMount:             make(map[types.UniquePodName]podToMount),
@@ -303,8 +307,10 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 
 		dsw.volumesToMount[volumeName] = vmt
 	}
+	// 如果 volume mount 过 pod,则需要重新mount
 	oldPodMount, ok := dsw.volumesToMount[volumeName].podsToMount[podName]
 	mountRequestTime := time.Now()
+	// 判断是否需要重新mount
 	if ok && !volumePlugin.RequiresRemount(volumeSpec) {
 		mountRequestTime = oldPodMount.mountRequestTime
 	}

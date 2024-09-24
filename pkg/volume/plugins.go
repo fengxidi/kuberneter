@@ -671,6 +671,7 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 		}
 	}
 
+	// 刷新插件，如果有动态插件需要更新或者创建
 	pm.refreshProbedPlugins()
 	for _, plugin := range pm.probedPlugins {
 		if plugin.CanSupport(spec) {
@@ -687,6 +688,7 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 	}
 
 	// Issue warning if the matched provider is deprecated
+	// 对已经准备弃用的插件进行日志告警，提醒使用者
 	pm.logDeprecation(match.GetPluginName())
 	return match, nil
 }

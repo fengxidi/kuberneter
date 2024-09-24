@@ -688,6 +688,7 @@ func IsMultiAttachAllowed(volumeSpec *volume.Spec) bool {
 }
 
 // IsAttachableVolume checks if the given volumeSpec is an attachable volume or not
+// 检查给定的volumeSpec是否为可连接卷 是否需要链接到该节点，例如共享存储是需要进行链接的
 func IsAttachableVolume(volumeSpec *volume.Spec, volumePluginMgr *volume.VolumePluginMgr) bool {
 	attachableVolumePlugin, _ := volumePluginMgr.FindAttachablePluginBySpec(volumeSpec)
 	if attachableVolumePlugin != nil {

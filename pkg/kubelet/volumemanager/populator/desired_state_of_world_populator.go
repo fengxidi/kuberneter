@@ -142,8 +142,15 @@ type processedPods struct {
 
 func (dswp *desiredStateOfWorldPopulator) Run(sourcesReady config.SourcesReady, stopCh <-chan struct{}) {
 	// Wait for the completion of a loop that started after sources are all ready, then set hasAddedPods accordingly
+	// 等待源准备就绪后启动的循环完成，然后相应地设置hasAddedPods
 	klog.InfoS("Desired state populator starts to run")
+	// 就是等等 kubelet 从 apiserver和静态文件开始同步pod
 	wait.PollUntil(dswp.loopSleepDuration, func() (bool, error) {
+		// sourcesReady.AllReady()， 这里就是确认注册的pod来源是否都就绪了，既是都有来源的channel 都注册了
+		// pkg/kubelet/config/config.go 这里有一个 chanel函数，
+		// c.sources.Insert(source) 添加有源
+		// c.mux.ChannelWithContext(ctx, source) 添加sourcesReady的源
+		// 这里就是一个检查条件，必须所有注册的源[静态pod,创建的pod,]都进行了同步才行
 		done := sourcesReady.AllReady()
 		dswp.populatorLoop()
 		return done, nil
@@ -196,6 +203,7 @@ func (dswp *desiredStateOfWorldPopulator) findAndAddNewPods() {
 	}
 
 	for _, pod := range dswp.podManager.GetPods() {
+		// 跳过 Terminating 的pod
 		if dswp.podStateProvider.ShouldPodContainersBeTerminating(pod.UID) {
 			// Do not (re)add volumes for pods that can't also be starting containers
 			continue
@@ -274,22 +282,27 @@ func (dswp *desiredStateOfWorldPopulator) processPodVolumes(
 		return
 	}
 
+	// pod 的uid
 	uniquePodName := util.GetUniquePodName(pod)
+	// 如果pod 已经处理过了，则跳过
 	if dswp.podPreviouslyProcessed(uniquePodName) {
 		return
 	}
 
 	allVolumesAdded := true
+	// 从spec的容器部分 获取卷和设备
 	mounts, devices := util.GetPodVolumeNames(pod)
 
 	// Process volume spec for each volume defined in pod
 	for _, podVolume := range pod.Spec.Volumes {
+		// 跳过没有使用的卷，不需要使用则不需要挂载
 		if !mounts.Has(podVolume.Name) && !devices.Has(podVolume.Name) {
 			// Volume is not used in the pod, ignore it.
 			klog.V(4).InfoS("Skipping unused volume", "pod", klog.KObj(pod), "volumeName", podVolume.Name)
 			continue
 		}
 
+		// 得到一个pvc, volumeSPec,GID
 		pvc, volumeSpec, volumeGidValue, err :=
 			dswp.createVolumeSpec(podVolume, pod, mounts, devices)
 		if err != nil {
@@ -300,6 +313,7 @@ func (dswp *desiredStateOfWorldPopulator) processPodVolumes(
 		}
 
 		// Add volume to desired state of world
+		// 将生成的结果 添加到  volumesToMount
 		uniqueVolumeName, err := dswp.desiredStateOfWorld.AddPodToVolume(
 			uniquePodName, pod, volumeSpec, podVolume.Name, volumeGidValue)
 		if err != nil {
@@ -310,6 +324,7 @@ func (dswp *desiredStateOfWorldPopulator) processPodVolumes(
 			klog.V(4).InfoS("Added volume to desired state", "pod", klog.KObj(pod), "volumeName", podVolume.Name, "volumeSpecName", volumeSpec.Name())
 		}
 		// sync reconstructed volume
+		// 如果不存在，则同步导 attachedVolumes
 		dswp.actualStateOfWorld.SyncReconstructedVolume(uniqueVolumeName, uniquePodName, podVolume.Name)
 
 		dswp.checkVolumeFSResize(pod, podVolume, pvc, volumeSpec, uniquePodName, mountedVolumesForPod)
@@ -449,13 +464,19 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 		// same way as a PVC reference. The only additional
 		// constraint (checked below) is that the PVC must be
 		// owned by the pod.
+		// 为临时存储生成一个卷名 podName+volumeName
 		pvcSource = &v1.PersistentVolumeClaimVolumeSource{
 			ClaimName: ephemeral.VolumeClaimName(pod, &podVolume),
 		}
 	}
+
+	// 如果挂载了pod卷有
 	if pvcSource != nil {
 		klog.V(5).InfoS("Found PVC", "PVC", klog.KRef(pod.Namespace, pvcSource.ClaimName))
 		// If podVolume is a PVC, fetch the real PV behind the claim
+		// 如果pvc不存在，或者没有绑定pv,返回错误
+		// 还没有绑定，所以需要等等绑定才会进行创建pod,
+		// Extract [提取]
 		pvc, err := dswp.getPVCExtractPV(
 			pod.Namespace, pvcSource.ClaimName)
 		if err != nil {
@@ -465,7 +486,9 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 				pvcSource.ClaimName,
 				err)
 		}
+		// 如果是临时卷，临时卷只能在相同命名空间
 		if isEphemeral {
+			// ns不相同，获取的owner 不是pod,都会返回 错误
 			if err := ephemeral.VolumeIsForPod(pod, pvc); err != nil {
 				return nil, nil, "", err
 			}
@@ -473,6 +496,7 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 		pvName, pvcUID := pvc.Spec.VolumeName, pvc.UID
 		klog.V(5).InfoS("Found bound PV for PVC", "PVC", klog.KRef(pod.Namespace, pvcSource.ClaimName), "PVCUID", pvcUID, "PVName", pvName)
 		// Fetch actual PV object
+		// 去请求 pv，如果pv不存在，pv没有绑定pvc【claimref为空】,绑定的pvc不是当前的pvc 都会返回错误
 		volumeSpec, volumeGidValue, err :=
 			dswp.getPVSpec(pvName, pvcSource.ReadOnly, pvcUID)
 		if err != nil {
@@ -483,6 +507,7 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 				err)
 		}
 		klog.V(5).InfoS("Extracted volumeSpec from bound PV and PVC", "PVC", klog.KRef(pod.Namespace, pvcSource.ClaimName), "PVCUID", pvcUID, "PVName", pvName, "volumeSpecName", volumeSpec.Name())
+		// 判断当前使用的卷volume 是否开启了 CSI 迁移
 		migratable, err := dswp.csiMigratedPluginManager.IsMigratable(volumeSpec)
 		if err != nil {
 			return nil, nil, "", err
@@ -505,6 +530,9 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 		// Error if a container has volumeMounts but the volumeMode of PVC isn't Filesystem.
 		// Do not check feature gate here to make sure even when the feature is disabled in kubelet,
 		// because controller-manager / API server can already contain block PVs / PVCs.
+		// 长度// TODO:删除功能。不再需要后的BlockVolume检查/评论
+		//如果容器具有volumeMounts，但PVC的volumeMode不是文件系统，则出错。即使在kubelet中禁用了功能，也不要在此处检查功能门以确保这一点，
+		//因为controller-manager/neneneba API服务器已经可以包含块PVs/PVC。
 		if mounts.Has(podVolume.Name) && volumeMode != v1.PersistentVolumeFilesystem {
 			return nil, nil, "", fmt.Errorf(
 				"volume %s has volumeMode %s, but is specified in volumeMounts",
@@ -512,6 +540,7 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 				volumeMode)
 		}
 		// Error if a container has volumeDevices but the volumeMode of PVC isn't Block
+		// 设备必须时块设备
 		if devices.Has(podVolume.Name) && volumeMode != v1.PersistentVolumeBlock {
 			return nil, nil, "", fmt.Errorf(
 				"volume %s has volumeMode %s, but is specified in volumeDevices",
@@ -599,6 +628,7 @@ func (dswp *desiredStateOfWorldPopulator) getPVSpec(
 			expectedClaimUID)
 	}
 
+	// 通过Annotation 的key 获取设置的 GID【group id】
 	volumeGidValue := getPVVolumeGidAnnotationValue(pv)
 	return volume.NewSpecFromPersistentVolume(pv, pvcReadOnly), volumeGidValue, nil
 }

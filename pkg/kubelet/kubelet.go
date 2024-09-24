@@ -1736,6 +1736,7 @@ func (kl *Kubelet) syncPod(ctx context.Context, updateType kubetypes.SyncPodType
 
 	// Volume manager will not mount volumes for terminating pods
 	// TODO: once context cancellation is added this check can be removed
+	// 如果不是删除的pod,则等等volume attach和mount
 	if !kl.podWorkers.IsPodTerminationRequested(pod.UID) {
 		// Wait for volumes to attach/mount
 		// 等待全部的volumes挂载到pod

@@ -156,6 +156,7 @@ type VolumeManager interface {
 }
 
 // podStateProvider can determine if a pod is going to be terminated
+// podStateProvider可以确定pod是否将被终止
 type podStateProvider interface {
 	ShouldPodContainersBeTerminating(k8stypes.UID) bool
 	ShouldPodRuntimeBeRemoved(k8stypes.UID) bool
@@ -246,6 +247,9 @@ type volumeManager struct {
 	// attached and which pods are referencing the volumes).
 	// The data structure is populated by the desired state of the world
 	// populator using the kubelet pod manager.
+	//desiredStateOfWorld是一个数据结构，包含根据卷管理器所需的世界状态：
+	//即应该连接哪些卷以及哪些Pod正在引用这些卷）。
+	//数据结构由使用kubelet pod管理器的world populator的期望状态填充
 	desiredStateOfWorld cache.DesiredStateOfWorld
 
 	// actualStateOfWorld is a data structure containing the actual state of
@@ -253,6 +257,9 @@ type volumeManager struct {
 	// this node and what pods the volumes are mounted to.
 	// The data structure is populated upon successful completion of attach,
 	// detach, mount, and unmount actions triggered by the reconciler.
+	//actualStateOfWorld是一个数据结构，根据管理器包含世界的实际状态：
+	//即哪些卷连接到此节点以及卷装载到哪些Pod。
+	//数据结构在协调器触发的连接、分离、装载和卸载操作成功完成后填充
 	actualStateOfWorld cache.ActualStateOfWorld
 
 	// operationExecutor is used to start asynchronous attach, detach, mount,
@@ -266,9 +273,12 @@ type volumeManager struct {
 
 	// desiredStateOfWorldPopulator runs an asynchronous periodic loop to
 	// populate the desiredStateOfWorld using the kubelet PodManager.
+	//desiredStateOfWorldPopulator运行一个异步周期性循环
+	//使用kubelet PodManager填充所需的StateOfWorld。
 	desiredStateOfWorldPopulator populator.DesiredStateOfWorldPopulator
 
 	// csiMigratedPluginManager keeps track of CSI migration status of plugins
+	// 跟踪插件的CSI迁移状态
 	csiMigratedPluginManager csimigration.PluginManager
 
 	// intreeToCSITranslator translates in-tree volume specs to CSI
@@ -408,6 +418,7 @@ func (vm *volumeManager) WaitForAttachAndMount(pod *v1.Pod) error {
 	// Some pods expect to have Setup called over and over again to update.
 	// Remount plugins for which this is true. (Atomically updating volumes,
 	// like Downward API, depend on this to update the contents of the volume).
+	// 一些Pod希望一遍又一遍地调用安装程序进行更新。重新挂载这是真的插件。（原子更新卷，如Downward API，依赖于此来更新卷的内容）。
 	vm.desiredStateOfWorldPopulator.ReprocessPod(uniquePodName)
 
 	// 立即轮询
